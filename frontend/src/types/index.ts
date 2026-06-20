@@ -54,4 +54,22 @@ export interface ASTNode {
   value?: string
   children?: ASTNode[]
   groupIndex?: number
+  start: number
+  end: number
+  id: string
+  description: string
+  example: string
+}
+
+export interface AstNodeHighlight {
+  start: number
+  end: number
+  nodeId: string
+}
+
+export interface AstNodeInfo {
+  typeLabel: string
+  description: string
+  example: string
+  color: string
 }

@@ -1,6 +1,26 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { NFA, MatchResult, MatchStep, RegexTemplate, ASTNode } from '../types'
+import type { NFA, MatchResult, MatchStep, RegexTemplate, ASTNode, AstNodeInfo, AstNodeHighlight } from '../types'
+
+const AST_NODE_INFO: Record<string, AstNodeInfo> = {
+  char: { typeLabel: '字符', description: '匹配单个指定字符', example: 'a 匹配字符 "a"', color: '#22c55e' },
+  star: { typeLabel: '* 零次或多次', description: '匹配前面的元素零次或多次', example: 'a* 匹配 "", "a", "aa", "aaa"...', color: '#f97316' },
+  plus: { typeLabel: '+ 一次或多次', description: '匹配前面的元素一次或多次', example: 'a+ 匹配 "a", "aa", "aaa"...', color: '#f97316' },
+  question: { typeLabel: '? 零次或一次', description: '匹配前面的元素零次或一次', example: 'a? 匹配 "" 或 "a"', color: '#f97316' },
+  or: { typeLabel: '| 或运算', description: '匹配左边或右边的表达式', example: 'a|b 匹配 "a" 或 "b"', color: '#8b5cf6' },
+  concat: { typeLabel: '连接', description: '按顺序连接多个元素', example: 'ab 匹配 "a" 后跟 "b"', color: '#3b82f6' },
+  group: { typeLabel: '捕获组', description: '将多个元素组合成一个组并捕获匹配内容', example: '(ab) 捕获 "ab" 作为分组', color: '#ec4899' },
+  dot: { typeLabel: '. 任意字符', description: '匹配除换行符外的任意单个字符', example: '. 匹配 "a", "1", "@"...', color: '#14b8a6' },
+  anchor: { typeLabel: '锚点', description: '匹配字符串的开始或结束位置', example: '^a 匹配行首, a$ 匹配行尾', color: '#eab308' },
+  charclass: { typeLabel: '字符类', description: '匹配方括号内的任意一个字符', example: '[a-z] 匹配任意小写字母', color: '#06b6d4' },
+  digit: { typeLabel: '\\d 数字', description: '匹配任意数字字符 (0-9)', example: '\\d 匹配 "0"-"9"', color: '#06b6d4' },
+  word: { typeLabel: '\\w 单词字符', description: '匹配字母、数字或下划线', example: '\\w 匹配 "a", "Z", "5", "_"', color: '#06b6d4' },
+  space: { typeLabel: '\\s 空白字符', description: '匹配空格、制表符、换行符等空白字符', example: '\\s 匹配 " ", "\\t", "\\n"', color: '#06b6d4' }
+}
+
+function getAstNodeInfo(type: string): AstNodeInfo {
+  return AST_NODE_INFO[type] || { typeLabel: type, description: '未知节点类型', example: '', color: '#64748b' }
+}
 
 const GROUP_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6']
 
@@ -317,44 +337,76 @@ export function computeNFA(nfaResult: ReturnType<typeof buildNFA>): NFA {
   return { states: nodes, transitions, startState: nfaResult.startState, acceptStates: nfaResult.acceptStates }
 }
 
+let nodeIdCounter = 0
+
+function createNode(type: ASTNode['type'], start: number, end: number, extra: Partial<ASTNode> = {}): ASTNode {
+  const info = getAstNodeInfo(type)
+  return {
+    type,
+    start,
+    end,
+    id: `ast-node-${nodeIdCounter++}`,
+    description: info.description,
+    example: info.example,
+    ...extra
+  }
+}
+
 export function parseAST(pattern: string): ASTNode {
   let pos = 0
   let groupIdx = 0
+  nodeIdCounter = 0
 
   function parseAtom(): ASTNode {
+    const start = pos
     const ch = pattern[pos]
     if (ch === '(') {
       pos++
-      if (pattern[pos] === '?') { pos++; if (pattern[pos] === ':') pos++ }
+      const isNonCapturing = pattern[pos] === '?'
+      if (isNonCapturing) { pos++; if (pattern[pos] === ':') pos++ }
       else groupIdx++
       const node = parseOr()
       if (pattern[pos] === ')') pos++
-      return { type: 'group', children: [node], groupIndex: groupIdx }
+      const info = getAstNodeInfo('group')
+      return createNode('group', start, pos, {
+        children: [node],
+        groupIndex: isNonCapturing ? undefined : groupIdx,
+        description: isNonCapturing ? '非捕获组：将多个元素组合但不捕获匹配内容' : info.description,
+        example: isNonCapturing ? '(?:ab) 分组但不捕获' : info.example
+      })
     }
     if (ch === '[') {
       pos++
       let cls = ''
       while (pos < pattern.length && pattern[pos] !== ']') { cls += pattern[pos]; pos++ }
       pos++
-      return { type: 'charclass', value: cls }
+      return createNode('charclass', start, pos, { value: cls })
     }
-    if (ch === '.') { pos++; return { type: 'dot' } }
+    if (ch === '.') {
+      pos++
+      return createNode('dot', start, pos)
+    }
     if (ch === '\\') {
       pos++
       const e = pattern[pos]; pos++
-      if (e === 'd') return { type: 'digit' }
-      if (e === 'w') return { type: 'word' }
-      if (e === 's') return { type: 'space' }
-      return { type: 'char', value: e }
+      if (e === 'd') return createNode('digit', start, pos)
+      if (e === 'w') return createNode('word', start, pos)
+      if (e === 's') return createNode('space', start, pos)
+      return createNode('char', start, pos, { value: e })
     }
-    if (ch === '^' || ch === '$') { pos++; return { type: 'anchor', value: ch } }
+    if (ch === '^' || ch === '$') {
+      pos++
+      return createNode('anchor', start, pos, { value: ch })
+    }
     pos++
-    return { type: 'char', value: ch }
+    return createNode('char', start, pos, { value: ch })
   }
 
   function parseQuantifier(): ASTNode {
+    const start = pos
     let node = parseAtom()
     while (pos < pattern.length && ['*', '+', '?', '{'].includes(pattern[pos])) {
+      const qStart = pos
       const q = pattern[pos]
       if (q === '{') {
         while (pos < pattern.length && pattern[pos] !== '}') pos++
@@ -363,32 +415,64 @@ export function parseAST(pattern: string): ASTNode {
         pos++
       }
       const type = q === '*' ? 'star' : q === '+' ? 'plus' : 'question'
-      node = { type, children: [node] }
+      const info = getAstNodeInfo(type)
+      node = createNode(type, start, pos, {
+        children: [node],
+        description: info.description,
+        example: info.example
+      })
       if (pos < pattern.length && pattern[pos] === '?') pos++
     }
     return node
   }
 
   function parseConcat(): ASTNode {
+    const start = pos
     const nodes: ASTNode[] = []
     while (pos < pattern.length && !['|', ')'].includes(pattern[pos])) {
       nodes.push(parseQuantifier())
     }
     if (nodes.length === 1) return nodes[0]
-    return { type: 'concat', children: nodes }
+    return createNode('concat', start, pos, { children: nodes })
   }
 
   function parseOr(): ASTNode {
+    const start = pos
     let left = parseConcat()
     while (pos < pattern.length && pattern[pos] === '|') {
       pos++
       const right = parseConcat()
-      left = { type: 'or', children: [left, right] }
+      left = createNode('or', start, pos, { children: [left, right] })
     }
     return left
   }
 
   return parseOr()
+}
+
+export function getNodeInfo(type: string): AstNodeInfo {
+  return getAstNodeInfo(type)
+}
+
+export function findNodeById(node: ASTNode, id: string): ASTNode | null {
+  if (node.id === id) return node
+  if (node.children) {
+    for (const child of node.children) {
+      const found = findNodeById(child, id)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+export function collectNodeHighlights(node: ASTNode): AstNodeHighlight[] {
+  const result: AstNodeHighlight[] = [{ start: node.start, end: node.end, nodeId: node.id }]
+  if (node.children) {
+    for (const child of node.children) {
+      result.push(...collectNodeHighlights(child))
+    }
+  }
+  return result
 }
 
 export const useRegexStore = defineStore('regex', () => {
@@ -401,8 +485,30 @@ export const useRegexStore = defineStore('regex', () => {
   const ast = ref<ASTNode | null>(null)
   const error = ref('')
   const selectedTemplate = ref<string>('')
+  const selectedAstNodeId = ref<string | null>(null)
+  const hoveredAstNodeId = ref<string | null>(null)
+  const expandedAstNodes = ref<Set<string>>(new Set())
 
   const groupColors = GROUP_COLORS
+
+  const selectedAstNode = computed(() => {
+    if (!ast.value || !selectedAstNodeId.value) return null
+    return findNodeById(ast.value, selectedAstNodeId.value)
+  })
+
+  const hoveredAstNode = computed(() => {
+    if (!ast.value || !hoveredAstNodeId.value) return null
+    return findNodeById(ast.value, hoveredAstNodeId.value)
+  })
+
+  const activeAstHighlight = computed(() => {
+    return hoveredAstNode.value || selectedAstNode.value
+  })
+
+  const highlightedPatternSegments = computed(() => {
+    if (!ast.value) return []
+    return collectNodeHighlights(ast.value)
+  })
 
   const matchHighlight = computed(() => {
     if (!matchResult.value || !matchResult.value.matched) return null
@@ -424,12 +530,50 @@ export const useRegexStore = defineStore('regex', () => {
       matchResult.value = runMatch(built.states, built.startState, testString.value)
       ast.value = parseAST(pattern.value)
       currentStep.value = 0
+      selectedAstNodeId.value = null
+      hoveredAstNodeId.value = null
+      expandedAstNodes.value = new Set()
     } catch (e: any) {
       error.value = e.message || '正则表达式解析错误'
       nfa.value = null
       matchResult.value = null
       ast.value = null
+      selectedAstNodeId.value = null
+      hoveredAstNodeId.value = null
+      expandedAstNodes.value = new Set()
     }
+  }
+
+  function selectAstNode(id: string | null) {
+    selectedAstNodeId.value = id
+  }
+
+  function hoverAstNode(id: string | null) {
+    hoveredAstNodeId.value = id
+  }
+
+  function toggleAstNodeExpanded(id: string) {
+    const newSet = new Set(expandedAstNodes.value)
+    if (newSet.has(id)) {
+      newSet.delete(id)
+    } else {
+      newSet.add(id)
+    }
+    expandedAstNodes.value = newSet
+  }
+
+  function isAstNodeExpanded(id: string): boolean {
+    return expandedAstNodes.value.has(id)
+  }
+
+  function expandAllAstNodes() {
+    if (!ast.value) return
+    const allIds = collectNodeHighlights(ast.value).map(h => h.nodeId)
+    expandedAstNodes.value = new Set(allIds)
+  }
+
+  function collapseAllAstNodes() {
+    expandedAstNodes.value = new Set()
   }
 
   function setPattern(p: string) {
@@ -482,7 +626,12 @@ export const useRegexStore = defineStore('regex', () => {
   return {
     pattern, testString, currentStep, isPlaying, nfa, matchResult, ast, error,
     selectedTemplate, groupColors, matchHighlight,
+    selectedAstNodeId, hoveredAstNodeId, selectedAstNode, hoveredAstNode,
+    activeAstHighlight, highlightedPatternSegments,
     execute, setPattern, setTestString, applyTemplate,
-    stepForward, stepBackward, resetStep, play, stop
+    stepForward, stepBackward, resetStep, play, stop,
+    selectAstNode, hoverAstNode, toggleAstNodeExpanded,
+    isAstNodeExpanded, expandAllAstNodes, collapseAllAstNodes,
+    getNodeInfo
   }
 })

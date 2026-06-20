@@ -2,7 +2,7 @@
   <div class="min-h-screen bg-slate-900 text-slate-200">
     <header class="border-b border-slate-700 px-6 py-4">
       <h1 class="text-2xl font-bold text-cyan-400">正则表达式可视化调试器</h1>
-      <p class="text-sm text-slate-500 mt-1">NFA 状态机可视化 · 逐步匹配高亮 · 分组捕获 · 回溯追踪</p>
+      <p class="text-sm text-slate-500 mt-1">NFA 状态机可视化 · 语法树分析 · 逐步匹配高亮 · 分组捕获 · 回溯追踪</p>
     </header>
 
     <div class="flex flex-col lg:flex-row gap-4 p-4">
@@ -13,10 +13,12 @@
 
       <div class="lg:w-1/2 space-y-4">
         <NfaVisualizer />
-        <MatchHighlight />
+        <AstVisualizer />
       </div>
 
       <div class="lg:w-1/4 space-y-4">
+        <MatchHighlight />
+
         <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
           <h3 class="text-sm font-bold text-slate-400 mb-3">匹配统计</h3>
           <div v-if="store.matchResult" class="space-y-2 text-sm">
@@ -64,6 +66,7 @@ import RegexEditor from './components/RegexEditor.vue'
 import NfaVisualizer from './components/NfaVisualizer.vue'
 import MatchHighlight from './components/MatchHighlight.vue'
 import TemplateLibrary from './components/TemplateLibrary.vue'
+import AstVisualizer from './components/AstVisualizer.vue'
 
 const store = useRegexStore()
 onMounted(() => store.execute())
