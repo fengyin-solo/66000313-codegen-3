@@ -50,10 +50,12 @@ export interface RegexTemplate {
 }
 
 export interface ASTNode {
-  type: 'char' | 'star' | 'plus' | 'question' | 'or' | 'concat' | 'group' | 'dot' | 'anchor' | 'charclass' | 'digit' | 'word' | 'space'
+  type: 'char' | 'star' | 'plus' | 'question' | 'brace' | 'or' | 'concat' | 'group' | 'dot' | 'anchor' | 'charclass' | 'digit' | 'word' | 'space'
   value?: string
   children?: ASTNode[]
   groupIndex?: number
+  min?: number
+  max?: number
   start: number
   end: number
   id: string

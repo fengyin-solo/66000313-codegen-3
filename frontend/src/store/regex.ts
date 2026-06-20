@@ -4,9 +4,10 @@ import type { NFA, MatchResult, MatchStep, RegexTemplate, ASTNode, AstNodeInfo, 
 
 const AST_NODE_INFO: Record<string, AstNodeInfo> = {
   char: { typeLabel: '字符', description: '匹配单个指定字符', example: 'a 匹配字符 "a"', color: '#22c55e' },
-  star: { typeLabel: '* 零次或多次', description: '匹配前面的元素零次或多次', example: 'a* 匹配 "", "a", "aa", "aaa"...', color: '#f97316' },
-  plus: { typeLabel: '+ 一次或多次', description: '匹配前面的元素一次或多次', example: 'a+ 匹配 "a", "aa", "aaa"...', color: '#f97316' },
-  question: { typeLabel: '? 零次或一次', description: '匹配前面的元素零次或一次', example: 'a? 匹配 "" 或 "a"', color: '#f97316' },
+  star: { typeLabel: '* 零次或多次', description: '匹配前面的元素零次或多次（贪婪模式）', example: 'a* 匹配 "", "a", "aa", "aaa"...', color: '#f97316' },
+  plus: { typeLabel: '+ 一次或多次', description: '匹配前面的元素一次或多次（贪婪模式）', example: 'a+ 匹配 "a", "aa", "aaa"...', color: '#f97316' },
+  question: { typeLabel: '? 零次或一次', description: '匹配前面的元素零次或一次（贪婪模式）', example: 'a? 匹配 "" 或 "a"', color: '#f97316' },
+  brace: { typeLabel: '{n,m} 量词', description: '匹配前面的元素指定次数', example: 'a{2,5} 匹配 "aa" 到 "aaaaa"', color: '#fb923c' },
   or: { typeLabel: '| 或运算', description: '匹配左边或右边的表达式', example: 'a|b 匹配 "a" 或 "b"', color: '#8b5cf6' },
   concat: { typeLabel: '连接', description: '按顺序连接多个元素', example: 'ab 匹配 "a" 后跟 "b"', color: '#3b82f6' },
   group: { typeLabel: '捕获组', description: '将多个元素组合成一个组并捕获匹配内容', example: '(ab) 捕获 "ab" 作为分组', color: '#ec4899' },
@@ -402,26 +403,87 @@ export function parseAST(pattern: string): ASTNode {
     return createNode('char', start, pos, { value: ch })
   }
 
+  function parseBraceQuantifier(): { min: number; max: number | undefined; lazy: boolean } | null {
+    if (pattern[pos] !== '{') return null
+    const startPos = pos
+    pos++
+    let minStr = ''
+    let maxStr = ''
+    let hasComma = false
+
+    while (pos < pattern.length && pattern[pos] !== '}') {
+      if (pattern[pos] === ',') {
+        hasComma = true
+        pos++
+        continue
+      }
+      if (!hasComma) {
+        minStr += pattern[pos]
+      } else {
+        maxStr += pattern[pos]
+      }
+      pos++
+    }
+    if (pos >= pattern.length || pattern[pos] !== '}') {
+      pos = startPos
+      return null
+    }
+    pos++
+
+    const min = parseInt(minStr, 10)
+    const max = hasComma ? (maxStr ? parseInt(maxStr, 10) : undefined) : min
+
+    const lazy = pos < pattern.length && pattern[pos] === '?'
+    if (lazy) pos++
+
+    return { min, max, lazy }
+  }
+
   function parseQuantifier(): ASTNode {
     const start = pos
     let node = parseAtom()
     while (pos < pattern.length && ['*', '+', '?', '{'].includes(pattern[pos])) {
-      const qStart = pos
       const q = pattern[pos]
+      const qStart = pos
+
       if (q === '{') {
-        while (pos < pattern.length && pattern[pos] !== '}') pos++
-        pos++
+        const braceInfo = parseBraceQuantifier()
+        if (!braceInfo) break
+        const info = getAstNodeInfo('brace')
+        const rangeText = braceInfo.max === undefined
+          ? `${braceInfo.min},`
+          : braceInfo.min === braceInfo.max
+            ? String(braceInfo.min)
+            : `${braceInfo.min},${braceInfo.max}`
+        const lazyText = braceInfo.lazy ? '?' : ''
+        const description = braceInfo.max === undefined
+          ? `匹配前面的元素至少 ${braceInfo.min} 次`
+          : braceInfo.min === braceInfo.max
+            ? `匹配前面的元素恰好 ${braceInfo.min} 次`
+            : `匹配前面的元素 ${braceInfo.min} 到 ${braceInfo.max} 次`
+        const example = `a{${rangeText}}${lazyText}`
+
+        node = createNode('brace', start, pos, {
+          children: [node],
+          value: `{${rangeText}}${lazyText}`,
+          min: braceInfo.min,
+          max: braceInfo.max,
+          description: description + (braceInfo.lazy ? '（非贪婪模式）' : '（贪婪模式）'),
+          example
+        })
       } else {
         pos++
+        const type = q === '*' ? 'star' : q === '+' ? 'plus' : 'question'
+        const info = getAstNodeInfo(type)
+        const lazy = pos < pattern.length && pattern[pos] === '?'
+        if (lazy) pos++
+        node = createNode(type, start, pos, {
+          children: [node],
+          value: q + (lazy ? '?' : ''),
+          description: info.description.replace('（贪婪模式）', lazy ? '（非贪婪模式）' : '（贪婪模式）'),
+          example: info.example
+        })
       }
-      const type = q === '*' ? 'star' : q === '+' ? 'plus' : 'question'
-      const info = getAstNodeInfo(type)
-      node = createNode(type, start, pos, {
-        children: [node],
-        description: info.description,
-        example: info.example
-      })
-      if (pos < pattern.length && pattern[pos] === '?') pos++
     }
     return node
   }
